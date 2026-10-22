@@ -1,0 +1,325 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  MODERATOR
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum AccountType {
+  PREMIUM
+  OFFLINE
+}
+
+enum BotStatus {
+  CREATED
+  QUEUED
+  STARTING
+  CONNECTING
+  ONLINE
+  RECONNECTING
+  STOPPING
+  STOPPED
+  FAILED
+  AUTH_REQUIRED
+}
+
+enum NotificationType {
+  BOT_CONNECTED
+  BOT_DISCONNECTED
+  RECONNECT_SUCCESS
+  RECONNECT_FAILED
+  AUTH_EXPIRED
+  SERVER_UNREACHABLE
+  WORKER_RESTARTED
+  RESOURCE_LIMIT
+  SCHEDULE_EXECUTED
+  BOT_UNEXPECTED_STOP
+}
+
+model User {
+  id                String    @id @default(cuid())
+  email             String    @unique
+  passwordHash      String
+  displayName       String?
+  avatarUrl         String?
+  role              Role      @default(USER)
+  emailVerified     Boolean   @default(false)
+  emailVerifyToken  String?
+  resetToken        String?
+  resetTokenExpiry  DateTime?
+  twoFactorEnabled  Boolean   @default(false)
+  twoFactorSecret   String?
+  timezone          String    @default("UTC")
+  language          String    @default("en")
+  planId            String?
+  isSuspended       Boolean   @default(false)
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  deletedAt         DateTime?
+
+  plan              SubscriptionPlan? @relation(fields: [planId], references: [id])
+  sessions          UserSession[]
+  minecraftAccounts MinecraftAccount[]
+  servers           ServerConfiguration[]
+  bots              Bot[]
+  afkProfiles       AFKProfile[]
+  schedules         BotSchedule[]
+  notifications     Notification[]
+  auditLogs         SecurityAuditLog[]
+
+  @@index([email])
+  @@index([role])
+}
+
+model UserSession {
+  id           String   @id @default(cuid())
+  userId       String
+  tokenHash    String
+  userAgent    String?
+  ipAddress    String?
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+  lastActiveAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tokenHash])
+}
+
+model SubscriptionPlan {
+  id                    String   @id @default(cuid())
+  name                  String   @unique
+  maxBots               Int      @default(1)
+  maxConcurrentBots     Int      @default(1)
+  maxWorkerRamMb        Int      @default(256)
+  maxCpuPercent         Int      @default(50)
+  logRetentionDays      Int      @default(7)
+  analyticsRetentionDays Int     @default(30)
+  schedulingEnabled     Boolean  @default(false)
+  notificationsEnabled  Boolean  @default(true)
+  isDefault             Boolean  @default(false)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  users User[]
+}
+
+model MinecraftAccount {
+  id              String      @id @default(cuid())
+  userId          String
+  type            AccountType
+  label           String?
+  username        String
+  uuid            String?
+  skinUrl         String?
+  // Premium only - encrypted tokens
+  accessTokenEnc  String?
+  refreshTokenEnc String?
+  tokenExpiry     DateTime?
+  // Offline only
+  description     String?
+  isActive        Boolean     @default(true)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+  deletedAt       DateTime?
+
+  user User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bots Bot[]
+
+  @@unique([userId, username, type])
+  @@index([userId])
+}
+
+model ServerConfiguration {
+  id              String   @id @default(cuid())
+  userId          String
+  displayName     String
+  host            String
+  port            Int      @default(25565)
+  version         String   @default("1.20.4")
+  authMode        String   @default("online") // online | offline
+  description     String?
+  lastTestAt      DateTime?
+  lastTestSuccess Boolean?
+  lastTestError   String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  deletedAt       DateTime?
+
+  user User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bots Bot[]
+
+  @@index([userId])
+}
+
+model AFKProfile {
+  id          String   @id @default(cuid())
+  userId      String
+  name        String
+  actions     Json     // [{ type: "jump"|"sneak"|"look"|"move", intervalMs, enabled }]
+  intervalMs  Int      @default(30000)
+  durationMs  Int?
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bots Bot[]
+
+  @@index([userId])
+}
+
+model Bot {
+  id                String    @id @default(cuid())
+  userId            String
+  name              String
+  accountId         String
+  serverId          String
+  afkProfileId      String?
+  status            BotStatus @default(CREATED)
+  autoReconnect     Boolean   @default(true)
+  autoStart         Boolean   @default(false)
+  reconnectDelayMs  Int       @default(5000)
+  maxReconnects     Int       @default(20)
+  config            Json?     // extra settings
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  deletedAt         DateTime?
+
+  user         User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account      MinecraftAccount     @relation(fields: [accountId], references: [id])
+  server       ServerConfiguration  @relation(fields: [serverId], references: [id])
+  afkProfile   AFKProfile?          @relation(fields: [afkProfileId], references: [id])
+  runtimeState BotRuntimeState?
+  schedules    BotSchedule[]
+  events       ConnectionEvent[]
+  logs         BotLog[]
+
+  @@index([userId])
+  @@index([status])
+}
+
+model BotRuntimeState {
+  id                  String    @id @default(cuid())
+  botId               String    @unique
+  workerId            String?
+  connectedAt         DateTime?
+  lastDisconnectAt    DateTime?
+  lastDisconnectReason String?
+  totalUptimeSeconds  BigInt    @default(0)
+  reconnectCount      Int       @default(0)
+  lastPingMs          Int?
+  protocolVersion     String?
+  errorMessage        String?
+  updatedAt           DateTime  @updatedAt
+
+  bot Bot @relation(fields: [botId], references: [id], onDelete: Cascade)
+}
+
+model BotSchedule {
+  id          String   @id @default(cuid())
+  userId      String
+  botId       String
+  action      String   // start | stop | restart
+  cron        String   // cron expression
+  timezone    String   @default("UTC")
+  enabled     Boolean  @default(true)
+  nextRunAt   DateTime?
+  lastRunAt   DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bot  Bot  @relation(fields: [botId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([botId])
+  @@index([nextRunAt])
+}
+
+model ConnectionEvent {
+  id        String   @id @default(cuid())
+  botId     String
+  type      String   // connected | disconnected | reconnect | error | auth_fail
+  reason    String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  bot Bot @relation(fields: [botId], references: [id], onDelete: Cascade)
+
+  @@index([botId])
+  @@index([createdAt])
+}
+
+model BotLog {
+  id        String   @id @default(cuid())
+  botId     String
+  level     String   // info | warn | error | debug
+  message   String
+  createdAt DateTime @default(now())
+
+  bot Bot @relation(fields: [botId], references: [id], onDelete: Cascade)
+
+  @@index([botId, createdAt])
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  type      NotificationType
+  title     String
+  body      String?
+  data      Json?
+  read      Boolean          @default(false)
+  createdAt DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, read])
+}
+
+model SecurityAuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  action     String
+  targetType String?
+  targetId   String?
+  outcome    String
+  ipAddress  String?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  actor User? @relation(fields: [actorId], references: [id])
+
+  @@index([actorId])
+  @@index([createdAt])
+}
+
+model SystemSetting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
+model Worker {
+  id          String   @id @default(cuid())
+  name        String
+  status      String   @default("idle")
+  lastHeartbeat DateTime?
+  cpuPercent  Float?
+  memoryMb    Float?
+  activeBots  Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}

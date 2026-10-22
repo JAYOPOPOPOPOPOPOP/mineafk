@@ -1,0 +1,85 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: mineafk
+      POSTGRES_PASSWORD: mineafk_secret
+      POSTGRES_DB: mineafk
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - '5432:5432'
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U mineafk']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - '6379:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.api
+    environment:
+      DATABASE_URL: postgresql://mineafk:mineafk_secret@postgres:5432/mineafk
+      REDIS_URL: redis://redis:6379
+      JWT_SECRET: change-me-in-production-min-32-chars
+      ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef
+      PORT: 3001
+      CORS_ORIGIN: http://localhost:3000
+      WEB_URL: http://localhost:3000
+      NODE_ENV: production
+      ENABLE_OFFLINE_ACCOUNTS: 'true'
+      ENABLE_PREMIUM_ACCOUNTS: 'true'
+      MAX_BOTS_PER_USER: 2
+      WORKER_CONCURRENCY: 2
+    ports:
+      - '3001:3001'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.worker
+    environment:
+      DATABASE_URL: postgresql://mineafk:mineafk_secret@postgres:5432/mineafk
+      REDIS_URL: redis://redis:6379
+      WORKER_CONCURRENCY: 2
+      NODE_ENV: production
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
+
+  web:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.web
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:3001
+      PORT: 3000
+    ports:
+      - '3000:3000'
+    depends_on:
+      - api
+
+volumes:
+  pgdata:

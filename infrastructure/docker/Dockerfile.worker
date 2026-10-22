@@ -1,0 +1,19 @@
+FROM node:20-alpine AS base
+WORKDIR /app
+
+COPY package.json ./
+COPY packages/database/package.json ./packages/database/
+COPY packages/shared/package.json ./packages/shared/
+COPY apps/workers/minecraft-worker/package.json ./apps/workers/minecraft-worker/
+
+RUN npm install --workspace=packages/database --workspace=packages/shared --workspace=apps/workers/minecraft-worker
+
+COPY packages/database ./packages/database
+COPY packages/shared ./packages/shared
+COPY apps/workers/minecraft-worker ./apps/workers/minecraft-worker
+
+WORKDIR /app/packages/database
+RUN npx prisma generate
+
+WORKDIR /app/apps/workers/minecraft-worker
+CMD ["npx", "tsx", "src/index.ts"]
